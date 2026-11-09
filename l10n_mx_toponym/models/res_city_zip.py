@@ -8,6 +8,7 @@ import requests
 
 from odoo import api, fields, models
 from odoo.exceptions import UserError
+from odoo.fields import Domain
 
 _logger = logging.getLogger(__name__)
 
@@ -72,13 +73,13 @@ SEPOMEX_STATE_TO_SAT = {
 
 class ResCityZip(models.Model):
     _inherit = "res.city.zip"
-    _rec_names_search = [
+    _rec_names_search = (
         "name",
         "l10n_mx_edi_colony",
         "city_id",
         "state_id",
         "country_id",
-    ]
+    )
 
     l10n_mx_edi_colony = fields.Char(
         string="Colony",
@@ -121,12 +122,36 @@ class ResCityZip(models.Model):
                 parts.append(rec.city_id.country_id.name)
             rec.display_name = ", ".join(part for part in parts if part)
 
+    @api.model
+    def _search_display_name(self, operator, value):
+        """Match the city, state and country through a subquery on res.city.
+
+        By default each of them joins res_city inside the OR with the zip
+        columns; with the whole catalog of Correos de México PostgreSQL then
+        compares every zip with every city, and a zip code typed in a Many2one
+        takes tens of seconds.
+        """
+        if operator in Domain.NEGATIVE_OPERATORS or not isinstance(value, str):
+            return super()._search_display_name(operator, value)
+        if not value and operator.endswith("like") and "=" not in operator:
+            return super()._search_display_name(operator, value)
+        cities = self.env["res.city"]._search(
+            Domain("display_name", operator, value)
+            | Domain("state_id.display_name", operator, value)
+            | Domain("country_id.display_name", operator, value)
+        )
+        return (
+            Domain("name", operator, value)
+            | Domain("l10n_mx_edi_colony", operator, value)
+            | Domain("city_id", "in", cities)
+        )
+
     # ------------------------------------------------------------ SEPOMEX
     @api.model
     def _sepomex_download(self):
         """Text of the national zip catalog of Correos de México."""
         url = (
-            self.env["ir.config_parameter"].sudo().get_param(SEPOMEX_URL_PARAM)
+            self.env["ir.config_parameter"].sudo().get_str(SEPOMEX_URL_PARAM)
             or SEPOMEX_URL
         )
         response = requests.get(url, timeout=180)
@@ -257,7 +282,7 @@ class ResCityZip(models.Model):
                 ) from error
             return None
         created, skipped = self._sepomex_load(self._sepomex_rows(text))
-        self.env["ir.config_parameter"].sudo().set_param(
+        self.env["ir.config_parameter"].sudo().set_str(
             SEPOMEX_LAST_UPDATE_PARAM, fields.Datetime.to_string(fields.Datetime.now())
         )
         _logger.info(

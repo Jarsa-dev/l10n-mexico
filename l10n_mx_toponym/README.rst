@@ -131,6 +131,7 @@ Contributors
 ------------
 
 - Alan Ramos (Jarsa)
+- Hector Meraz (Jarsa)
 
 Maintainers
 -----------

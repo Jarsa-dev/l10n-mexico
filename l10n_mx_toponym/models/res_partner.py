@@ -63,3 +63,17 @@ class ResPartner(models.Model):
             "l10n_mx_edi_colony",
             "l10n_mx_edi_colony_code",
         ]
+
+    def _zip_id_domain(self):
+        """In the Mexican address form the zip sets the city, state and country
+        (the city is not even on the form), so limiting the zips to the current
+        city and state would leave no way to move the partner to a zip of another
+        municipality: only the country is kept."""
+        mx_address_view = self.env.ref(
+            "l10n_mx_toponym.mx_partner_address_form", raise_if_not_found=False
+        )
+        if mx_address_view and (
+            self.env.company.country_id.address_view_id == mx_address_view
+        ):
+            return '[("city_id.country_id", "=?", country_id)]'
+        return super()._zip_id_domain()

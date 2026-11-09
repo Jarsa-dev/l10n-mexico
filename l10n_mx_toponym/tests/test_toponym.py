@@ -7,6 +7,7 @@ import requests
 
 from odoo.exceptions import UserError
 from odoo.tests.common import TransactionCase, tagged
+from odoo.tools import mute_logger
 
 SAMPLE = join(dirname(__file__), "sepomex_sample.txt")
 
@@ -52,7 +53,7 @@ class TestToponym(TransactionCase):
         """Only missing (city, zip, colony code) entries are created; the
         locality is taken from an entry of the same zip; a second run adds 0."""
         before = self.Zip.search_count([])
-        created, skipped = self._load_sample()
+        created, _skipped = self._load_sample()
         self.assertGreater(created, 0)
         self.assertEqual(self.Zip.search_count([]), before + created)
         entry = self.Zip.search(
@@ -88,7 +89,7 @@ class TestToponym(TransactionCase):
         )
         self.assertEqual(self._load_sample()[0], 0)
         self.assertTrue(
-            self.env["ir.config_parameter"].get_param(
+            self.env["ir.config_parameter"].get_str(
                 "l10n_mx_toponym.sepomex_last_update"
             )
         )
@@ -100,6 +101,7 @@ class TestToponym(TransactionCase):
         created, skipped = self.Zip._sepomex_load(rows[:1])
         self.assertEqual((created, skipped), (0, 1))
 
+    @mute_logger("odoo.addons.l10n_mx_toponym.models.res_city_zip")
     def test_sepomex_download_failure(self):
         """The cron never breaks on a download error; the button reports it."""
         with patch.object(
@@ -119,18 +121,55 @@ class TestToponym(TransactionCase):
         )
         self.assertEqual(
             entry.display_name,
-            ", ".join(
-                [
-                    "01000",
-                    "San Ángel",
-                    entry.city_id.name,
-                    entry.city_id.state_id.name,
-                    self.mx_country.name,
-                ]
-            ),
+            f"01000, San Ángel, {entry.city_id.name}, "
+            f"{entry.city_id.state_id.name}, {self.mx_country.name}",
         )
         found = self.Zip.name_search("San Ángel", limit=50)
         self.assertIn(entry.id, [rec_id for rec_id, _name in found])
+
+    def test_zip_search_by_city_state_and_country(self):
+        """The name of the zip is searched by zip code, colony, city, state and
+        country; the negative operators keep working."""
+        self._load_sample()
+        entry = self.Zip.search(
+            [("name", "=", "01000"), ("l10n_mx_edi_colony", "=", "San Ángel")]
+        )
+        for term in (
+            "01000",
+            "Ángel",
+            entry.city_id.name,
+            entry.city_id.state_id.name,
+            self.mx_country.name,
+        ):
+            self.assertEqual(
+                self.Zip.search(
+                    [("display_name", "ilike", term), ("id", "=", entry.id)]
+                ),
+                entry,
+                term,
+            )
+        self.assertFalse(
+            self.Zip.search(
+                [("display_name", "not ilike", "San Ángel"), ("id", "=", entry.id)]
+            )
+        )
+        self.assertFalse(
+            self.Zip.search(
+                [("display_name", "ilike", "Nowhere"), ("id", "=", entry.id)]
+            )
+        )
+
+    def test_zip_domain_of_mexican_address_form(self):
+        """With the Mexican address form the zips of the whole country are
+        offered, so the partner can move to another municipality."""
+        partner_model = self.env["res.partner"]
+        self.env.company.country_id = self.mx_country
+        self.assertEqual(
+            partner_model._zip_id_domain(),
+            '[("city_id.country_id", "=?", country_id)]',
+        )
+        self.env.company.country_id = self.env.ref("base.us")
+        self.assertIn('"city_id", "=?", city_id', partner_model._zip_id_domain())
 
     def test_partner_colony_from_zip(self):
         """Partner colony/locality fields are computed from the selected zip."""
