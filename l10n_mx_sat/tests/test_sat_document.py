@@ -502,7 +502,7 @@ class TestSatDocument(TransactionCase):
         path = (
             Path(__file__).resolve().parents[1]
             / "migrations"
-            / "19.0.1.1.1"
+            / "19.0.2.0.0"
             / "pre-migrate.py"
         )
         spec = importlib.util.spec_from_file_location(
