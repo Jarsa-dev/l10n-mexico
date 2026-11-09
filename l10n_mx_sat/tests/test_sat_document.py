@@ -1,6 +1,8 @@
 # Copyright 2026 Gray Matter Logic
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
 
+import importlib.util
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lxml import etree
@@ -495,6 +497,69 @@ class TestSatDocument(TransactionCase):
         self.assertEqual(Document._normalize_voucher_type("Nómina"), "N")
         self.assertFalse(Document._normalize_voucher_type("X"))
         self.assertFalse(Document._normalize_voucher_type(False))
+
+    def _load_voucher_type_migration(self):
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "19.0.1.1.1"
+            / "pre-migrate.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "l10n_mx_sat_pre_migrate_voucher_type", path
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.migrate
+
+    def test_migrate_legacy_voucher_type(self):
+        request = self._create_request(request_type="metadata")
+        samples = (
+            ("MIG-I-UUID-123456789012345678901", "Ingreso", "I"),
+            ("MIG-E-UUID-123456789012345678901", "Egreso", "E"),
+            ("MIG-N-UUID-123456789012345678901", "Nómina", "N"),
+            ("MIG-P-UUID-123456789012345678901", "Pago", "P"),
+            ("MIG-T-UUID-123456789012345678901", "Traslado", "T"),
+            ("MIG-SP-UUID-123456789012345678901", " p ", "P"),
+            ("MIG-BAD-UUID-12345678901234567890", "Factura", False),
+            ("MIG-BLANK-UUID-123456789012345678", "   ", False),
+            ("MIG-KEEP-UUID-1234567890123456789", "I", "I"),
+        )
+        created = []
+        for uuid, raw, expected in samples:
+            doc = self.Document._upsert_from_metadata_row(
+                {
+                    "uuid": uuid,
+                    "issuer_rfc": "AAA010101AAA",
+                    "receiver_rfc": "EKU9003173C9",
+                    "voucher_type": "I",
+                    "sat_status": "valid",
+                },
+                self.company,
+                request,
+            )
+            created.append((doc, raw, expected))
+        self.env.flush_all()
+        self.env.invalidate_all()
+        for doc, raw, _expected in created:
+            self.env.cr.execute(
+                "UPDATE l10n_mx_sat_document SET voucher_type = %s WHERE id = %s",
+                (raw, doc.id),
+            )
+        docs = self.Document.browse([doc.id for doc, _raw, _expected in created])
+        # A validated selection read rejects the metadata labels. The migration
+        # rewrites them before that happens.
+        with self.assertRaises(ValueError):
+            self.Document._fields["voucher_type"].convert_to_cache("Ingreso", docs[:1])
+
+        self._load_voucher_type_migration()(self.env.cr, "19.0.1.1.0")
+        self.env.invalidate_all()
+        for doc, _raw, expected in created:
+            self.assertEqual(doc.voucher_type, expected)
+        self.assertEqual(
+            set(docs.mapped("voucher_type")),
+            {"I", "E", "P", "N", "T", False},
+        )
 
     def test_upsert_from_metadata_invalid_total_and_preserve_blanks(self):
         request = self._create_request(request_type="metadata")
