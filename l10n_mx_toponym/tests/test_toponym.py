@@ -171,6 +171,20 @@ class TestToponym(TransactionCase):
         self.env.company.country_id = self.env.ref("base.us")
         self.assertIn('"city_id", "=?", city_id', partner_model._zip_id_domain())
 
+    def test_address_form_kept_over_edi_extended(self):
+        """l10n_mx_edi_extended loads after this module and its data writes its
+        own Mexican address form: ours (with the zip completion) must stay, while
+        a form chosen by hand is respected."""
+        toponym_view = self.env.ref("l10n_mx_toponym.mx_partner_address_form")
+        other_view = self.env.ref("base.view_partner_address_form")
+        self.assertEqual(self.mx_country.address_view_id, toponym_view)
+        self.mx_country.with_context(install_module="l10n_mx_edi_extended").write(
+            {"address_view_id": other_view.id}
+        )
+        self.assertEqual(self.mx_country.address_view_id, toponym_view)
+        self.mx_country.write({"address_view_id": other_view.id})
+        self.assertEqual(self.mx_country.address_view_id, other_view)
+
     def test_partner_colony_from_zip(self):
         """Partner colony/locality fields are computed from the selected zip."""
         self._load_sample()
