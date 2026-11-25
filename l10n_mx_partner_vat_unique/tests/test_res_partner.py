@@ -9,7 +9,7 @@ class TestResPartnerVatUnique(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.env["ir.config_parameter"].sudo().set_param(
+        cls.env["ir.config_parameter"].sudo().set_bool(
             "partner_vat_unique.partner_vat_unique", True
         )
         cls.partner_model = cls.env["res.partner"]
